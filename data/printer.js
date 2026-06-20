@@ -7,9 +7,7 @@ window.deviceHTML['printer'] = `
                         <h1 class="device-title" style="font-size: 4rem; margin-bottom: 1rem;">Printer</h1>
                         <span class="device-type" style="font-size: 1.2rem;">Output Device</span>
                     </div>
-                    <div class="sketchfab-embed-wrapper" style="width: 100%; height: 50vh; margin-top: 2rem;">
-                        <iframe title="Office Printer" style="width: 100%; height: 100%; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" frameborder="0" allowfullscreen mozallowfullscreen="true" webkitallowfullscreen="true" allow="autoplay; fullscreen; xr-spatial-tracking" xr-spatial-tracking execution-while-out-of-viewport execution-while-not-rendered web-share src="https://sketchfab.com/models/c555837428684705aca3b3eb62c1ba12/embed?autostart=1&ui_theme=dark"> </iframe>
-                    </div>
+                    <div id="canvas-container-printer" style="width: 100%; height: 60vh; min-height: 400px; margin-top: 2rem; position: relative;"></div>
                 </section>
 
                 <section class="snap-section">

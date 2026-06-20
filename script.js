@@ -142,6 +142,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(init3DMouse, 100);
             } else if (id === 'external-ssd') {
                 setTimeout(init3DExternalSSD, 100);
+            } else if (id === 'monitors') {
+                setTimeout(init3DMonitor, 100);
+            } else if (id === 'joystick') {
+                setTimeout(init3DJoystick, 100);
+            } else if (id === 'printer') {
+                setTimeout(init3DPrinter, 100);
             }
             
             // Generate TOC after injecting content
@@ -1296,6 +1302,740 @@ document.addEventListener('DOMContentLoaded', () => {
             annotations.forEach(anno => {
                 anno.anchor.getWorldPosition(tempVec);
                 // Apply world offset
+                const labelPos = tempVec.clone().add(anno.offset);
+                
+                const positions = new Float32Array([
+                    tempVec.x, tempVec.y, tempVec.z,
+                    labelPos.x, labelPos.y, labelPos.z
+                ]);
+                anno.line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                anno.dot.position.copy(tempVec);
+
+                const projected = labelPos.clone().project(camera);
+                if (projected.z > 1) {
+                    anno.el.style.opacity = '0';
+                    return;
+                }
+                const x = (projected.x * .5 + .5) * container.clientWidth;
+                const y = (projected.y * -.5 + .5) * container.clientHeight;
+
+                anno.el.style.left = `${x}px`;
+                anno.el.style.top = `${y}px`;
+                anno.el.style.opacity = '1';
+            });
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            if (container.clientWidth) {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        });
+    }
+
+    // 3D Monitor Rendering Logic
+    function init3DMonitor() {
+        const container = document.getElementById('canvas-container-monitor');
+        if (!container || typeof THREE === 'undefined') return;
+
+        // Cleanup previous if exists
+        container.innerHTML = '';
+        if (currentReqId) {
+            cancelAnimationFrame(currentReqId);
+            currentReqId = null;
+        }
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 8, 18);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+
+        // Fullscreen Toggle
+        const fsBtn = document.createElement('button');
+        fsBtn.innerHTML = '⛶ Fullscreen';
+        fsBtn.style.position = 'absolute';
+        fsBtn.style.bottom = '20px';
+        fsBtn.style.right = '20px';
+        fsBtn.style.zIndex = '100';
+        fsBtn.style.background = 'var(--text-primary)';
+        fsBtn.style.color = 'var(--bg-main)';
+        fsBtn.style.border = 'none';
+        fsBtn.style.padding = '8px 16px';
+        fsBtn.style.borderRadius = '20px';
+        fsBtn.style.cursor = 'pointer';
+        fsBtn.style.fontWeight = 'bold';
+        fsBtn.style.fontFamily = 'var(--font-main)';
+        fsBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+        fsBtn.style.transition = 'transform 0.2s';
+        
+        fsBtn.onmouseover = () => fsBtn.style.transform = 'scale(1.05)';
+        fsBtn.onmouseout = () => fsBtn.style.transform = 'scale(1)';
+
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(err => {
+                    console.error(`Error: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement === container) {
+                fsBtn.innerHTML = '✖ Exit Fullscreen';
+            } else {
+                fsBtn.innerHTML = '⛶ Fullscreen';
+            }
+        });
+        container.appendChild(fsBtn);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+        
+        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        mainLight.position.set(10, 20, 10);
+        mainLight.castShadow = true;
+        scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0xd4eaff, 0.5);
+        fillLight.position.set(-10, 5, 10);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0x1abc9c, 0.7);
+        rimLight.position.set(0, 10, -15);
+        scene.add(rimLight);
+
+        const monitorGroup = new THREE.Group();
+        scene.add(monitorGroup);
+
+        // Loading text
+        const loadingDiv = document.createElement('div');
+        loadingDiv.textContent = 'Loading 3D Model...';
+        loadingDiv.style.position = 'absolute';
+        loadingDiv.style.top = '50%';
+        loadingDiv.style.left = '50%';
+        loadingDiv.style.transform = 'translate(-50%, -50%)';
+        loadingDiv.style.color = '#1abc9c';
+        loadingDiv.style.fontFamily = 'var(--font-main)';
+        loadingDiv.style.fontSize = '24px';
+        container.appendChild(loadingDiv);
+
+        if (!window.monitorGLBData) {
+            loadingDiv.textContent = 'Failed to load model data.';
+            loadingDiv.style.color = 'red';
+            return;
+        }
+
+        const loader = new THREE.GLTFLoader();
+        loader.load(window.monitorGLBData, (gltf) => {
+            if (container.contains(loadingDiv)) {
+                container.removeChild(loadingDiv);
+            }
+            const model = gltf.scene;
+
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    
+                    // Make the model a light color (silver/white) for better visibility against dark background
+                    if (child.material && child.material.color) {
+                        child.material.color.setHex(0xe0e5ec); // Light silver
+                        child.material.roughness = 0.3;
+                        child.material.metalness = 0.6;
+                    }
+                }
+            });
+
+            // Center and scale the whole model
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 15.0 / maxDim; // Adjust scale depending on the model's original size
+            model.scale.setScalar(scale);
+            
+            // Recompute bounding box after scale to center it
+            const boxScaled = new THREE.Box3().setFromObject(model);
+            const centerScaled = boxScaled.getCenter(new THREE.Vector3());
+            model.position.sub(centerScaled);
+            
+            monitorGroup.add(model);
+        }, undefined, (error) => {
+            console.error('Error loading monitor model:', error);
+            if (container.contains(loadingDiv)) {
+                loadingDiv.textContent = 'Failed to load model.';
+                loadingDiv.style.color = 'red';
+            }
+        });
+
+        const monitorAnnotations = [];
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x1abc9c, transparent: true, opacity: 0.6 });
+        const dotGeo = new THREE.SphereGeometry(0.15, 8, 8);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0x1abc9c });
+
+        const manualTargets = [
+            { text: 'Display Panel', pos: new THREE.Vector3(0, 2, 0.5), offset: new THREE.Vector3(-4, 3, 2) },
+            { text: 'Monitor Stand', pos: new THREE.Vector3(0, -6, -1.0), offset: new THREE.Vector3(3, -2, 2) },
+            { text: 'Bezel', pos: new THREE.Vector3(7, 3, 0), offset: new THREE.Vector3(4, 3, 1) }
+        ];
+
+        manualTargets.forEach(target => {
+            const objCenter = new THREE.Object3D();
+            objCenter.position.copy(target.pos);
+            monitorGroup.add(objCenter);
+
+            const lineGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(6); 
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const line = new THREE.Line(lineGeo, lineMat);
+            scene.add(line);
+
+            const dot = new THREE.Mesh(dotGeo, dotMat);
+            scene.add(dot);
+
+            const el = document.createElement('div');
+            el.className = 'annotation-label';
+            el.innerHTML = `[ ${target.text} ]`;
+            el.style.position = 'absolute';
+            el.style.color = '#ffffff';
+            el.style.background = 'rgba(26, 188, 156, 0.9)'; 
+            el.style.padding = '4px 12px';
+            el.style.borderRadius = '20px';
+            el.style.fontSize = '12px';
+            el.style.fontWeight = 'bold';
+            el.style.pointerEvents = 'none'; 
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.whiteSpace = 'nowrap';
+            el.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+            el.style.zIndex = '10';
+            container.appendChild(el);
+
+            monitorAnnotations.push({
+                obj: objCenter,
+                offset: target.offset,
+                line: line,
+                dot: dot,
+                el: el
+            });
+        });
+
+        function animate() {
+            currentReqId = requestAnimationFrame(animate);
+            controls.update();
+
+            const tempVec = new THREE.Vector3();
+            monitorAnnotations.forEach(anno => {
+                anno.obj.getWorldPosition(tempVec);
+                const labelPos = tempVec.clone().add(anno.offset);
+                
+                const positions = new Float32Array([
+                    tempVec.x, tempVec.y, tempVec.z,
+                    labelPos.x, labelPos.y, labelPos.z
+                ]);
+                anno.line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                anno.dot.position.copy(tempVec);
+
+                const projected = labelPos.clone().project(camera);
+                if (projected.z > 1) {
+                    anno.el.style.opacity = '0';
+                    return;
+                }
+                const x = (projected.x * .5 + .5) * container.clientWidth;
+                const y = (projected.y * -.5 + .5) * container.clientHeight;
+
+                anno.el.style.left = `${x}px`;
+                anno.el.style.top = `${y}px`;
+                anno.el.style.opacity = '1';
+            });
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            if (container.clientWidth) {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        });
+    }
+
+    // 3D Joystick Rendering Logic
+    function init3DJoystick() {
+        const container = document.getElementById('canvas-container-joystick');
+        if (!container || typeof THREE === 'undefined') return;
+
+        // Cleanup previous if exists
+        container.innerHTML = '';
+        if (currentReqId) {
+            cancelAnimationFrame(currentReqId);
+            currentReqId = null;
+        }
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 8, 18);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+
+        // Fullscreen Toggle
+        const fsBtn = document.createElement('button');
+        fsBtn.innerHTML = '⛶ Fullscreen';
+        fsBtn.style.position = 'absolute';
+        fsBtn.style.bottom = '20px';
+        fsBtn.style.right = '20px';
+        fsBtn.style.zIndex = '100';
+        fsBtn.style.background = 'var(--text-primary)';
+        fsBtn.style.color = 'var(--bg-main)';
+        fsBtn.style.border = 'none';
+        fsBtn.style.padding = '8px 16px';
+        fsBtn.style.borderRadius = '20px';
+        fsBtn.style.cursor = 'pointer';
+        fsBtn.style.fontWeight = 'bold';
+        fsBtn.style.fontFamily = 'var(--font-main)';
+        fsBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+        fsBtn.style.transition = 'transform 0.2s';
+        
+        fsBtn.onmouseover = () => fsBtn.style.transform = 'scale(1.05)';
+        fsBtn.onmouseout = () => fsBtn.style.transform = 'scale(1)';
+
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(err => {
+                    console.error(`Error: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement === container) {
+                fsBtn.innerHTML = '✖ Exit Fullscreen';
+            } else {
+                fsBtn.innerHTML = '⛶ Fullscreen';
+            }
+        });
+        container.appendChild(fsBtn);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Increased ambient
+        scene.add(ambientLight);
+        
+        const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        mainLight.position.set(10, 20, 10);
+        mainLight.castShadow = true;
+        scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0xd4eaff, 0.8);
+        fillLight.position.set(-10, 5, 10);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0x1abc9c, 1.0);
+        rimLight.position.set(0, 10, -15);
+        scene.add(rimLight);
+
+        // Additional back and bottom lights for full illumination
+        const backLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        backLight.position.set(0, 5, -20);
+        scene.add(backLight);
+
+        const bottomLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        bottomLight.position.set(0, -20, 0);
+        scene.add(bottomLight);
+
+        const joystickGroup = new THREE.Group();
+        scene.add(joystickGroup);
+
+        // Loading text
+        const loadingDiv = document.createElement('div');
+        loadingDiv.textContent = 'Loading 3D Model...';
+        loadingDiv.style.position = 'absolute';
+        loadingDiv.style.top = '50%';
+        loadingDiv.style.left = '50%';
+        loadingDiv.style.transform = 'translate(-50%, -50%)';
+        loadingDiv.style.color = '#1abc9c';
+        loadingDiv.style.fontFamily = 'var(--font-main)';
+        loadingDiv.style.fontSize = '24px';
+        container.appendChild(loadingDiv);
+
+        if (!window.joystickGLBData) {
+            loadingDiv.textContent = 'Failed to load model data.';
+            loadingDiv.style.color = 'red';
+            return;
+        }
+
+        const loader = new THREE.GLTFLoader();
+        loader.load(window.joystickGLBData, (gltf) => {
+            if (container.contains(loadingDiv)) {
+                container.removeChild(loadingDiv);
+            }
+            const model = gltf.scene;
+
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    
+                    if (child.material && child.material.color) {
+                        child.material.color.setHex(0xe0e5ec); // Silver color
+                        child.material.roughness = 0.3;
+                        child.material.metalness = 0.6;
+                    }
+                }
+            });
+
+            // Center and scale the whole model
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 12.0 / maxDim; 
+            model.scale.setScalar(scale);
+            
+            // Recompute bounding box after scale to center it
+            const boxScaled = new THREE.Box3().setFromObject(model);
+            const centerScaled = boxScaled.getCenter(new THREE.Vector3());
+            model.position.sub(centerScaled);
+            
+            joystickGroup.add(model);
+        }, undefined, (error) => {
+            console.error('Error loading joystick model:', error);
+            if (container.contains(loadingDiv)) {
+                loadingDiv.textContent = 'Failed to load model.';
+                loadingDiv.style.color = 'red';
+            }
+        });
+
+        const joystickAnnotations = [];
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x1abc9c, transparent: true, opacity: 0.6 });
+        const dotGeo = new THREE.SphereGeometry(0.15, 8, 8);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0x1abc9c });
+
+        const manualTargets = [
+            { text: 'Flight Stick (Lever)', pos: new THREE.Vector3(0, 3, 0), offset: new THREE.Vector3(-3, 3, 2) },
+            { text: 'Base Unit', pos: new THREE.Vector3(0, -4, 0), offset: new THREE.Vector3(3, -2, 2) },
+            { text: 'Trigger / Switches', pos: new THREE.Vector3(0, 5, 2), offset: new THREE.Vector3(4, 3, 1) }
+        ];
+
+        manualTargets.forEach(target => {
+            const objCenter = new THREE.Object3D();
+            objCenter.position.copy(target.pos);
+            joystickGroup.add(objCenter);
+
+            const lineGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(6); 
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const line = new THREE.Line(lineGeo, lineMat);
+            scene.add(line);
+
+            const dot = new THREE.Mesh(dotGeo, dotMat);
+            scene.add(dot);
+
+            const el = document.createElement('div');
+            el.className = 'annotation-label';
+            el.innerHTML = `[ ${target.text} ]`;
+            el.style.position = 'absolute';
+            el.style.color = '#ffffff';
+            el.style.background = 'rgba(26, 188, 156, 0.9)'; 
+            el.style.padding = '4px 12px';
+            el.style.borderRadius = '20px';
+            el.style.fontSize = '12px';
+            el.style.fontWeight = 'bold';
+            el.style.pointerEvents = 'none'; 
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.whiteSpace = 'nowrap';
+            el.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+            el.style.zIndex = '10';
+            container.appendChild(el);
+
+            joystickAnnotations.push({
+                obj: objCenter,
+                offset: target.offset,
+                line: line,
+                dot: dot,
+                el: el
+            });
+        });
+
+        function animate() {
+            currentReqId = requestAnimationFrame(animate);
+            controls.update();
+
+            const tempVec = new THREE.Vector3();
+            joystickAnnotations.forEach(anno => {
+                anno.obj.getWorldPosition(tempVec);
+                const labelPos = tempVec.clone().add(anno.offset);
+                
+                const positions = new Float32Array([
+                    tempVec.x, tempVec.y, tempVec.z,
+                    labelPos.x, labelPos.y, labelPos.z
+                ]);
+                anno.line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                anno.dot.position.copy(tempVec);
+
+                const projected = labelPos.clone().project(camera);
+                if (projected.z > 1) {
+                    anno.el.style.opacity = '0';
+                    return;
+                }
+                const x = (projected.x * .5 + .5) * container.clientWidth;
+                const y = (projected.y * -.5 + .5) * container.clientHeight;
+
+                anno.el.style.left = `${x}px`;
+                anno.el.style.top = `${y}px`;
+                anno.el.style.opacity = '1';
+            });
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            if (container.clientWidth) {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        });
+    }
+
+    // 3D Printer Rendering Logic
+    function init3DPrinter() {
+        const container = document.getElementById('canvas-container-printer');
+        if (!container || typeof THREE === 'undefined') return;
+
+        // Cleanup previous if exists
+        container.innerHTML = '';
+        if (currentReqId) {
+            cancelAnimationFrame(currentReqId);
+            currentReqId = null;
+        }
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 8, 18);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+
+        // Fullscreen Toggle
+        const fsBtn = document.createElement('button');
+        fsBtn.innerHTML = '⛶ Fullscreen';
+        fsBtn.style.position = 'absolute';
+        fsBtn.style.bottom = '20px';
+        fsBtn.style.right = '20px';
+        fsBtn.style.zIndex = '100';
+        fsBtn.style.background = 'var(--text-primary)';
+        fsBtn.style.color = 'var(--bg-main)';
+        fsBtn.style.border = 'none';
+        fsBtn.style.padding = '8px 16px';
+        fsBtn.style.borderRadius = '20px';
+        fsBtn.style.cursor = 'pointer';
+        fsBtn.style.fontWeight = 'bold';
+        fsBtn.style.fontFamily = 'var(--font-main)';
+        fsBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+        fsBtn.style.transition = 'transform 0.2s';
+        
+        fsBtn.onmouseover = () => fsBtn.style.transform = 'scale(1.05)';
+        fsBtn.onmouseout = () => fsBtn.style.transform = 'scale(1)';
+
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(err => {
+                    console.error(`Error: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement === container) {
+                fsBtn.innerHTML = '✖ Exit Fullscreen';
+            } else {
+                fsBtn.innerHTML = '⛶ Fullscreen';
+            }
+        });
+        container.appendChild(fsBtn);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        mainLight.position.set(10, 20, 10);
+        mainLight.castShadow = true;
+        scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0xd4eaff, 0.6);
+        fillLight.position.set(-10, 5, 10);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0x1abc9c, 0.8);
+        rimLight.position.set(0, 10, -15);
+        scene.add(rimLight);
+
+        const printerGroup = new THREE.Group();
+        scene.add(printerGroup);
+
+        // Loading text
+        const loadingDiv = document.createElement('div');
+        loadingDiv.textContent = 'Loading 3D Model...';
+        loadingDiv.style.position = 'absolute';
+        loadingDiv.style.top = '50%';
+        loadingDiv.style.left = '50%';
+        loadingDiv.style.transform = 'translate(-50%, -50%)';
+        loadingDiv.style.color = '#1abc9c';
+        loadingDiv.style.fontFamily = 'var(--font-main)';
+        loadingDiv.style.fontSize = '24px';
+        container.appendChild(loadingDiv);
+
+        if (!window.printerGLBData) {
+            loadingDiv.textContent = 'Failed to load model data.';
+            loadingDiv.style.color = 'red';
+            return;
+        }
+
+        const loader = new THREE.GLTFLoader();
+        loader.load(window.printerGLBData, (gltf) => {
+            if (container.contains(loadingDiv)) {
+                container.removeChild(loadingDiv);
+            }
+            const model = gltf.scene;
+
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    // Slightly adjust material to look better in dark mode without overriding it completely
+                    if (child.material && child.material.color) {
+                         child.material.roughness = Math.min(child.material.roughness || 0.5, 0.8);
+                    }
+                }
+            });
+
+            // Center and scale the whole model
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 12.0 / maxDim; 
+            model.scale.setScalar(scale);
+            
+            // Recompute bounding box after scale to center it
+            const boxScaled = new THREE.Box3().setFromObject(model);
+            const centerScaled = boxScaled.getCenter(new THREE.Vector3());
+            model.position.sub(centerScaled);
+            
+            printerGroup.add(model);
+        }, undefined, (error) => {
+            console.error('Error loading printer model:', error);
+            if (container.contains(loadingDiv)) {
+                loadingDiv.textContent = 'Failed to load model.';
+                loadingDiv.style.color = 'red';
+            }
+        });
+
+        const printerAnnotations = [];
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x1abc9c, transparent: true, opacity: 0.6 });
+        const dotGeo = new THREE.SphereGeometry(0.15, 8, 8);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0x1abc9c });
+
+        const manualTargets = [
+            { text: 'Paper Tray / Feeder', pos: new THREE.Vector3(0, 5, -3), offset: new THREE.Vector3(-4, 3, -2) },
+            { text: 'Control Panel / Display', pos: new THREE.Vector3(-4, 4, 3), offset: new THREE.Vector3(-4, 2, 2) },
+            { text: 'Output Tray', pos: new THREE.Vector3(0, -3, 4), offset: new THREE.Vector3(0, -3, 3) }
+        ];
+
+        manualTargets.forEach(target => {
+            const objCenter = new THREE.Object3D();
+            objCenter.position.copy(target.pos);
+            printerGroup.add(objCenter);
+
+            const lineGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(6); 
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const line = new THREE.Line(lineGeo, lineMat);
+            scene.add(line);
+
+            const dot = new THREE.Mesh(dotGeo, dotMat);
+            scene.add(dot);
+
+            const el = document.createElement('div');
+            el.className = 'annotation-label';
+            el.innerHTML = `[ ${target.text} ]`;
+            el.style.position = 'absolute';
+            el.style.color = '#ffffff';
+            el.style.background = 'rgba(26, 188, 156, 0.9)'; 
+            el.style.padding = '4px 12px';
+            el.style.borderRadius = '20px';
+            el.style.fontSize = '12px';
+            el.style.fontWeight = 'bold';
+            el.style.pointerEvents = 'none'; 
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.whiteSpace = 'nowrap';
+            el.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+            el.style.zIndex = '10';
+            container.appendChild(el);
+
+            printerAnnotations.push({
+                obj: objCenter,
+                offset: target.offset,
+                line: line,
+                dot: dot,
+                el: el
+            });
+        });
+
+        function animate() {
+            currentReqId = requestAnimationFrame(animate);
+            controls.update();
+
+            const tempVec = new THREE.Vector3();
+            printerAnnotations.forEach(anno => {
+                anno.obj.getWorldPosition(tempVec);
                 const labelPos = tempVec.clone().add(anno.offset);
                 
                 const positions = new Float32Array([
